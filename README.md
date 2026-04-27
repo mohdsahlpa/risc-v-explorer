@@ -10,9 +10,10 @@ This project is part of the RISC-V Mentorship Coding Challenge. It parses the RI
    python -m venv venv
    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
    ```
-3. Install the dependencies:
+3. Install the dependencies (using `uv` for proper and fast installation):
    ```bash
-   pip install -r requirements.txt
+   pip install uv
+   uv pip install -r requirements.txt
    ```
 
 ## Project Structure
