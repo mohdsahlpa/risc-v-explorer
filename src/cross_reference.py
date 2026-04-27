@@ -1,122 +1,83 @@
+"""
+Tier 2 — Cross-Reference with the ISA Manual
+
+Scans the locally cloned riscv-isa-manual repository's src/ directory for
+AsciiDoc files, extracts extension name mentions, and cross-references them
+against the extension tags found in instr_dict.json.
+"""
 import re
 import os
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-# Single-call Git Trees API — returns the full repo tree in one request,
-# avoiding unauthenticated rate limits that hit per directory traversal.
-_TREES_API = (
-    "https://api.github.com/repos/riscv/riscv-isa-manual/git/trees/main?recursive=1"
+# Default path to the locally cloned ISA manual repository
+_DEFAULT_MANUAL_SRC = (
+    Path(__file__).parent.parent / "data" / "riscv-isa-manual" / "src"
 )
-_RAW_BASE = "https://raw.githubusercontent.com/riscv/riscv-isa-manual/main"
 
-# Pattern 1: Explicit "X Extension" phrasing for single-letter base ISA
-# e.g. "M extension", "F extension"
+# Matches single-letter base ISA extensions when written as "M extension",
+# "F extension", etc. — prevents matching stray uppercase letters.
 _SINGLE_LETTER_EXT = re.compile(
     r"(?<![`\w])([MFDACHQVS])(?:-extension|\s+extension|\s+standard)(?![\w])",
     re.IGNORECASE,
 )
 
-# Pattern 2: Multi-char extension names starting with Z or Sv (real extension names)
-# e.g. Zba, Zicsr, Zifencei, Svnapot — must be at a word boundary, 3+ chars
+# Matches multi-character extension names beginning with Z or Sv — the two
+# naming conventions used in the RISC-V ISA (e.g. Zba, Zicsr, Svnapot).
 _MULTI_CHAR_EXT = re.compile(
     r"(?<![`\w])([Zz][a-zA-Z][a-zA-Z0-9]{1,20}|[Ss]v[a-zA-Z][a-zA-Z0-9]{0,20})(?![\w])"
 )
 
+# Single-letter base ISA identifiers that are valid extension names
+_KNOWN_SINGLE_LETTER = {"m", "f", "d", "a", "c", "h", "q", "v", "s"}
 
-def _get_adoc_file_urls(token: str | None = None) -> list[str]:
+# Tokens that pass the regex but are not extension names (author names, words)
+_NOISE = {"zero", "zeros", "zeroes", "zhang", "zabrocki", "zandijk"}
+
+
+def scan_manual_src(src_dir: Path = _DEFAULT_MANUAL_SRC) -> set[str]:
     """
-    Uses the Git Trees API (one request) to enumerate all .adoc files
-    under src/ in the ISA manual repository, then builds raw content URLs.
+    Walks the ISA manual src/ directory and extracts raw extension name tokens
+    from every .adoc file found (including subdirectories).
 
-    Accepts an optional GitHub personal access token to raise the rate limit
-    from 60 to 5000 requests/hour (set the GITHUB_TOKEN env var).
+    Args:
+        src_dir: Path to the src/ directory of a cloned riscv-isa-manual repo.
+
+    Raises:
+        FileNotFoundError: If src_dir does not exist.
     """
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    src_dir = Path(src_dir)
+    if not src_dir.is_dir():
+        raise FileNotFoundError(
+            f"ISA manual src/ directory not found at {src_dir}.\n"
+            "Run: git clone --depth=1 "
+            "https://github.com/riscv/riscv-isa-manual.git data/riscv-isa-manual"
+        )
 
-    resp = requests.get(_TREES_API, headers=headers)
-    resp.raise_for_status()
-
-    tree = resp.json().get("tree", [])
-    urls = []
-    for item in tree:
-        path: str = item.get("path", "")
-        if item.get("type") == "blob" and path.startswith("src/") and path.endswith(".adoc"):
-            urls.append(f"{_RAW_BASE}/{path}")
-    return urls
-
-
-def _scan_local(src_dir: str) -> set[str]:
-    """
-    Walks a locally cloned ISA manual src/ directory and scans all .adoc files.
-    No network calls required.
-    """
     found: set[str] = set()
-    for dirpath, _, filenames in os.walk(src_dir):
-        for fname in filenames:
-            if fname.endswith(".adoc"):
-                fpath = os.path.join(dirpath, fname)
-                try:
-                    with open(fpath, encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                    for match in _SINGLE_LETTER_EXT.finditer(content):
-                        found.add(match.group(1).lower())
-                    for match in _MULTI_CHAR_EXT.finditer(content):
-                        found.add(match.group(1).lower())
-                except OSError:
-                    pass
+    for adoc_file in src_dir.rglob("*.adoc"):
+        try:
+            content = adoc_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        for match in _SINGLE_LETTER_EXT.finditer(content):
+            found.add(match.group(1).lower())
+        for match in _MULTI_CHAR_EXT.finditer(content):
+            found.add(match.group(1).lower())
+
     return found
-
-
-def fetch_manual_extensions(max_workers: int = 10) -> set[str]:
-    """
-    Returns the raw set of extension name tokens found in the ISA manual.
-
-    Resolution order:
-      1. RISCV_MANUAL_PATH — path to a local clone of riscv/riscv-isa-manual.
-         The src/ subdirectory is scanned directly. No network calls needed.
-      2. Remote fetch via GitHub raw URLs (fast, not rate-limited for content).
-         A single GitHub Trees API call is used to enumerate file paths.
-         Set GITHUB_TOKEN to raise the API rate limit from 60 to 5000 req/hr.
-    """
-    local_path = os.environ.get("RISCV_MANUAL_PATH")
-    if local_path:
-        src_dir = os.path.join(local_path, "src")
-        if not os.path.isdir(src_dir):
-            # Tolerate passing the src/ dir directly
-            src_dir = local_path
-        print(f"Using local ISA manual at: {src_dir}")
-        return _scan_local(src_dir)
-
-    token = os.environ.get("GITHUB_TOKEN")
-    print("Fetching file list from ISA manual repository...")
-    urls = _get_adoc_file_urls(token=token)
-    print(f"  Found {len(urls)} .adoc file(s). Scanning...")
-
-    all_tokens: set[str] = set()
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_fetch_and_scan, u): u for u in urls}
-        for future in as_completed(futures):
-            try:
-                all_tokens |= future.result()
-            except Exception:
-                pass  # skip files that fail to fetch
-
-    return all_tokens
 
 
 def normalize_json_ext(tag: str) -> str:
     """
-    Strips the 'rv_', 'rv32_', 'rv64_' prefix from a JSON extension tag
-    and returns the bare name in lowercase for comparison.
+    Strips the rv_, rv32_, or rv64_ prefix from a JSON extension tag and
+    returns the bare lowercase name for comparison.
 
     Examples:
-        rv_zba      -> zba
-        rv64_zbkb   -> zbkb
-        rv32_zknd   -> zknd
-        rv_i        -> i
+        rv_zba    -> zba
+        rv64_zbkb -> zbkb
+        rv32_zknd -> zknd
+        rv_i      -> i
     """
     tag = tag.lower()
     for prefix in ("rv32_", "rv64_", "rv_"):
@@ -127,32 +88,15 @@ def normalize_json_ext(tag: str) -> str:
 
 def normalize_manual_token(token: str) -> str:
     """
-    Normalises a raw token from the AsciiDoc source to a bare lowercase name
-    suitable for comparison with normalised JSON tags.
-
-    Examples:
-        zba         -> zba
-        zicsr       -> zicsr
-        svnapot     -> svnapot
-        m           -> m  (single-letter base ISA)
+    Normalises a raw AsciiDoc token to a bare lowercase extension name.
     """
     return token.lower().strip()
 
 
-# Single-letter base ISA extensions that are valid RISC-V extension names
-_KNOWN_SINGLE_LETTER = {"m", "f", "d", "a", "c", "h", "q", "v", "s"}
-
-# Hard deny-list: tokens that match the regex but are definitely not extensions
-_NOISE = {
-    "zero", "zeros", "zeroes", "zhang", "zabrocki", "zandijk",  # author names / words
-}
-
-
 def build_manual_ext_set(raw_tokens: set[str]) -> set[str]:
     """
-    Filters and normalises the raw token set from the AsciiDoc scan
-    into a clean set of bare extension names.
-    Single-letter entries are only kept if they're known base ISA letters.
+    Filters and normalises the raw token set from the AsciiDoc scan into a
+    clean set of bare extension names, removing noise and invalid tokens.
     """
     cleaned = set()
     for tok in raw_tokens:
@@ -170,16 +114,15 @@ def cross_reference(json_ext_tags: set[str], manual_ext_names: set[str]) -> dict
     Compares the normalised extension sets from the JSON and the manual.
 
     Returns a dict with keys:
-        matched         - extensions present in both
-        json_only       - in JSON but not in manual
-        manual_only     - in manual but not in JSON
+        matched      - extensions present in both sources
+        json_only    - in JSON but not mentioned in the manual
+        manual_only  - mentioned in the manual but not in JSON
     """
     norm_json = {normalize_json_ext(t): t for t in json_ext_tags}
-    norm_manual = manual_ext_names
 
-    matched_keys = norm_json.keys() & norm_manual
-    json_only_keys = norm_json.keys() - norm_manual
-    manual_only_keys = norm_manual - norm_json.keys()
+    matched_keys = norm_json.keys() & manual_ext_names
+    json_only_keys = norm_json.keys() - manual_ext_names
+    manual_only_keys = manual_ext_names - norm_json.keys()
 
     return {
         "matched": {k: norm_json[k] for k in sorted(matched_keys)},
@@ -188,9 +131,9 @@ def cross_reference(json_ext_tags: set[str], manual_ext_names: set[str]) -> dict
     }
 
 
-def print_cross_reference_report(result: dict):
+def print_cross_reference_report(result: dict) -> None:
     """
-    Prints the cross-reference summary report.
+    Prints the Tier 2 cross-reference summary report.
     """
     matched = result["matched"]
     json_only = result["json_only"]
