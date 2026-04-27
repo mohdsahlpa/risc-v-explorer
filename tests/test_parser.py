@@ -1,9 +1,11 @@
 """
-Unit tests for src/parser.py — covers instruction parsing, grouping, and
-multi-extension detection logic.
+Unit tests for src/parser.py — covers instruction parsing, grouping,
+multi-extension detection, and data loading logic.
 """
+import json
 import pytest
-from src.parser import parse_instructions
+from pathlib import Path
+from src.parser import load_instruction_data, parse_instructions
 
 
 # ---------------------------------------------------------------------------
@@ -24,10 +26,10 @@ def single_ext_data():
 def multi_ext_data():
     """Some instructions appear in multiple extensions (crypto overlap pattern)."""
     return {
-        "andn":      {"extension": ["rv_zbb", "rv_zbkb", "rv_zk"], "encoding": "0" * 32},
-        "add":       {"extension": ["rv_i"],                         "encoding": "0" * 32},
-        "clmul":     {"extension": ["rv_zbc", "rv_zbkc"],            "encoding": "0" * 32},
-        "sha256sig0":{"extension": ["rv_zknh", "rv_zkn", "rv_zk"],   "encoding": "0" * 32},
+        "andn":       {"extension": ["rv_zbb", "rv_zbkb", "rv_zk"], "encoding": "0" * 32},
+        "add":        {"extension": ["rv_i"],                         "encoding": "0" * 32},
+        "clmul":      {"extension": ["rv_zbc", "rv_zbkc"],            "encoding": "0" * 32},
+        "sha256sig0": {"extension": ["rv_zknh", "rv_zkn", "rv_zk"],   "encoding": "0" * 32},
     }
 
 
@@ -35,10 +37,33 @@ def multi_ext_data():
 def edge_case_data():
     """Edge cases: empty extension list, string instead of list, no entries."""
     return {
-        "mystery":  {"encoding": "0" * 32},                    # missing 'extension' key
-        "weird":    {"extension": [], "encoding": "0" * 32},    # empty list
+        "mystery":  {"encoding": "0" * 32},                     # missing 'extension' key
+        "weird":    {"extension": [], "encoding": "0" * 32},     # empty list
         "lone":     {"extension": ["rv_x"], "encoding": "0" * 32},
     }
+
+
+# ---------------------------------------------------------------------------
+# Tests: data loading
+# ---------------------------------------------------------------------------
+
+class TestLoadInstructionData:
+
+    def test_loads_valid_json(self, tmp_path):
+        payload = {"add": {"extension": ["rv_i"], "encoding": "0" * 32}}
+        f = tmp_path / "instr_dict.json"
+        f.write_text(json.dumps(payload), encoding="utf-8")
+        result = load_instruction_data(f)
+        assert result == payload
+
+    def test_raises_on_missing_file(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="instr_dict.json not found"):
+            load_instruction_data(tmp_path / "nonexistent.json")
+
+    def test_returns_dict(self, tmp_path):
+        f = tmp_path / "instr_dict.json"
+        f.write_text("{}", encoding="utf-8")
+        assert isinstance(load_instruction_data(f), dict)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +86,6 @@ class TestGroupingByExtension:
 
     def test_multi_extension_instruction_appears_in_each(self, multi_ext_data):
         ext_map, _ = parse_instructions(multi_ext_data)
-        # 'andn' should show up under rv_zbb, rv_zbkb, and rv_zk
         assert "andn" in ext_map["rv_zbb"]
         assert "andn" in ext_map["rv_zbkb"]
         assert "andn" in ext_map["rv_zk"]
@@ -98,8 +122,13 @@ class TestMultiExtensionDetection:
         assert set(multi["clmul"]) == {"rv_zbc", "rv_zbkc"}
         assert set(multi["sha256sig0"]) == {"rv_zknh", "rv_zkn", "rv_zk"}
 
-    def test_no_duplicate_extensions_in_multi(self, multi_ext_data):
-        # Even if the source JSON has duplicates, we deduplicate before recording
+    def test_extension_list_is_sorted(self, multi_ext_data):
+        """Extension lists must be sorted for deterministic, reproducible output."""
+        _, multi = parse_instructions(multi_ext_data)
+        for mnemonic, exts in multi.items():
+            assert exts == sorted(exts), f"{mnemonic} extension list is not sorted"
+
+    def test_no_duplicate_extensions_in_multi(self):
         duped = {
             "dup_instr": {"extension": ["rv_a", "rv_a", "rv_b"], "encoding": "0" * 32}
         }
@@ -116,8 +145,6 @@ class TestEdgeCases:
 
     def test_missing_extension_key_skipped(self, edge_case_data):
         ext_map, _ = parse_instructions(edge_case_data)
-        # 'mystery' has no extension key — it should not crash and should
-        # not appear under any extension
         all_grouped = [i for instrs in ext_map.values() for i in instrs]
         assert "mystery" not in all_grouped
 
@@ -132,7 +159,6 @@ class TestEdgeCases:
         assert multi == {}
 
     def test_non_list_extension_coerced(self):
-        # Some entries might have extension as a bare string instead of a list
         data = {"fence": {"extension": "rv_i", "encoding": "0" * 32}}
         ext_map, _ = parse_instructions(data)
         assert "fence" in ext_map.get("rv_i", [])

@@ -1,13 +1,15 @@
 """
-Unit tests for src/cross_reference.py — covers normalization,
-filtering, and cross-reference logic.
+Unit tests for src/cross_reference.py — covers normalisation, noise filtering,
+manual scanning, and cross-reference logic.
 """
 import pytest
+from pathlib import Path
 from src.cross_reference import (
     normalize_json_ext,
     normalize_manual_token,
     build_manual_ext_set,
     cross_reference,
+    scan_manual_src,
 )
 
 
@@ -34,7 +36,6 @@ class TestNormalizeJsonExt:
         assert normalize_json_ext("rv_m") == "m"
 
     def test_case_insensitive(self):
-        # Input might have uppercase; result should always be lowercase
         assert normalize_json_ext("RV_ZBA") == "zba"
 
 
@@ -70,7 +71,7 @@ class TestBuildManualExtSet:
         assert "zicsr" in result
 
     def test_noise_tokens_removed(self):
-        result = build_manual_ext_set({"zero", "zhang", "zabrocki"})
+        result = build_manual_ext_set({"zero", "zhang", "zabrocki", "zeroed", "zeroing", "zext"})
         assert len(result) == 0
 
     def test_known_single_letters_kept(self):
@@ -90,6 +91,55 @@ class TestBuildManualExtSet:
         result = build_manual_ext_set({"svnapot", "svpbmt"})
         assert "svnapot" in result
         assert "svpbmt" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: scan_manual_src
+# ---------------------------------------------------------------------------
+
+class TestScanManualSrc:
+
+    def test_raises_on_missing_directory(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="ISA manual src/"):
+            scan_manual_src(tmp_path / "nonexistent")
+
+    def test_finds_z_extensions_in_adoc(self, tmp_path):
+        adoc = tmp_path / "test.adoc"
+        adoc.write_text(
+            "The Zba extension adds address generation instructions.\n"
+            "See also Zicsr for CSR access.",
+            encoding="utf-8"
+        )
+        result = scan_manual_src(tmp_path)
+        assert "zba" in result
+        assert "zicsr" in result
+
+    def test_finds_single_letter_ext_phrasing(self, tmp_path):
+        adoc = tmp_path / "base.adoc"
+        adoc.write_text(
+            "The M extension provides multiply and divide instructions.",
+            encoding="utf-8"
+        )
+        result = scan_manual_src(tmp_path)
+        assert "m" in result
+
+    def test_ignores_non_adoc_files(self, tmp_path):
+        txt = tmp_path / "notes.txt"
+        txt.write_text("The Zba extension is great.", encoding="utf-8")
+        result = scan_manual_src(tmp_path)
+        assert "zba" not in result
+
+    def test_scans_subdirectories(self, tmp_path):
+        subdir = tmp_path / "unpriv"
+        subdir.mkdir()
+        adoc = subdir / "zba.adoc"
+        adoc.write_text("Zba extension provides SH1ADD.\n", encoding="utf-8")
+        result = scan_manual_src(tmp_path)
+        assert "zba" in result
+
+    def test_empty_directory_returns_empty_set(self, tmp_path):
+        result = scan_manual_src(tmp_path)
+        assert result == set()
 
 
 # ---------------------------------------------------------------------------
@@ -135,8 +185,6 @@ class TestCrossReference:
         assert "svnapot" in result["manual_only"]
 
     def test_prefix_variants_normalised_correctly(self):
-        # rv32_zknd and rv64_zknd both normalise to 'zknd'
-        # The dict will only keep one (last write wins on collision)
         json_tags = {"rv32_zknd", "rv64_zknd"}
         manual_names = {"zknd"}
         result = cross_reference(json_tags, manual_names)
@@ -148,3 +196,9 @@ class TestCrossReference:
         result = cross_reference(json_tags, manual_names)
         keys = list(result["matched"].keys())
         assert keys == sorted(keys)
+
+    def test_manual_only_list_sorted(self):
+        json_tags = {"rv_zba"}
+        manual_names = {"zba", "svnapot", "zicntr", "zalrsc"}
+        result = cross_reference(json_tags, manual_names)
+        assert result["manual_only"] == sorted(result["manual_only"])

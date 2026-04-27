@@ -1,8 +1,6 @@
 # RISC-V Instruction Set Explorer
 
-A Python tool that parses the RISC-V instruction set, groups instructions by extension, cross-references them against the official ISA manual, and visualises which extensions share instructions.
-
-Built as part of the RISC-V Mentorship Coding Challenge.
+A Python tool built for the RISC-V Mentorship Coding Challenge. It parses the RISC-V instruction set, cross-references extensions against the official ISA manual, and visualises which extensions share instructions — all from locally cloned data, with no runtime network calls.
 
 ---
 
@@ -10,20 +8,23 @@ Built as part of the RISC-V Mentorship Coding Challenge.
 
 ```
 risc-v-explorer/
-├── main.py                  # Unified entry point (runs all tiers)
+├── main.py                   # Unified entry point (runs all tiers)
 ├── requirements.txt
 ├── src/
-│   ├── parser.py            # Tier 1 — instruction parsing and grouping
-│   ├── cross_reference.py   # Tier 2 — ISA manual cross-reference
-│   └── graph.py             # Tier 3 — extension sharing graph
-└── tests/
-    ├── test_parser.py
-    └── test_cross_reference.py
+│   ├── parser.py             # Tier 1 — instruction parsing and grouping
+│   ├── cross_reference.py    # Tier 2 — ISA manual cross-reference
+│   └── graph.py              # Tier 3 — extension sharing graph
+├── tests/
+│   ├── test_parser.py        # 47 unit tests, zero network calls
+│   └── test_cross_reference.py
+└── data/                     # Local clones (git-ignored, set up manually)
+    ├── riscv-extensions-landscape/
+    └── riscv-isa-manual/
 ```
 
 ---
 
-## Getting Started
+## Setup
 
 ### 1. Clone the repository
 
@@ -32,55 +33,49 @@ git clone https://github.com/mohdsahlpa/risc-v-explorer.git
 cd risc-v-explorer
 ```
 
-### 2. Set up a virtual environment (recommended)
+### 2. Create and activate a virtual environment
 
 ```bash
 python -m venv .venv
+
 # Windows
 .venv\Scripts\activate
+
 # macOS / Linux
 source .venv/bin/activate
 ```
 
 ### 3. Install dependencies
 
-This project uses [`uv`](https://github.com/astral-sh/uv) for fast, reliable package installation:
+This project uses [`uv`](https://github.com/astral-sh/uv) for fast installation:
 
 ```bash
 pip install uv
 uv pip install -r requirements.txt
 ```
 
-### 4. (Optional) Set a GitHub token
+### 4. Clone the data repositories
 
-Tier 2 fetches files from the RISC-V ISA manual repository using the GitHub API.
-The unauthenticated rate limit is 60 requests/hour. If you hit it, create a
-[classic personal access token](https://github.com/settings/tokens) with no scopes
-and export it before running:
+Both repositories are read from disk at runtime. Clone them once into `data/`:
 
 ```bash
-# Windows PowerShell
-$env:GITHUB_TOKEN = "ghp_your_token_here"
-
-# macOS / Linux
-export GITHUB_TOKEN="ghp_your_token_here"
+git clone --depth=1 https://github.com/rpsene/riscv-extensions-landscape.git data/riscv-extensions-landscape
+git clone --depth=1 https://github.com/riscv/riscv-isa-manual.git data/riscv-isa-manual
 ```
+
+The `data/` directory is git-ignored and never committed.
 
 ---
 
-## Running the Tool
+## Running
 
 ```bash
 python main.py
-# or, using uv's runner
+# or
 uv run main.py
 ```
 
-This runs all three tiers in sequence:
-
-- **Tier 1** — Fetches `instr_dict.json` and prints a summary table of extensions + multi-extension instructions
-- **Tier 2** — Scans the ISA manual AsciiDoc sources and cross-references extension names
-- **Tier 3** — Builds and prints the extension-sharing graph
+Runs all three tiers in sequence. No environment variables or network access required.
 
 ---
 
@@ -90,13 +85,13 @@ This runs all three tiers in sequence:
 python -m pytest tests/ -v
 ```
 
-36 tests across two suites — no network calls, fully self-contained with synthetic fixtures.
+**47 tests**, all self-contained using `pytest`'s `tmp_path` fixture — no network calls, no data/ dependency.
 
 ---
 
 ## Sample Output
 
-### Tier 1
+### Tier 1 — Extension Summary
 
 ```
 === Extension Summary ===
@@ -105,16 +100,15 @@ Extension Tag        | Count | Example Mnemonic
 rv_i                 | 37 instructions | e.g. ADD
 rv_m                 | 8 instructions  | e.g. DIV
 rv_zba               | 3 instructions  | e.g. SH1ADD
-rv_zbb               | 17 instructions | e.g. ANDN
-rv_v                 | 627 instructions| e.g. VAADD_VV
+rv_v                 | 627 instructions | e.g. VAADD_VV
 ...
 
 === Instructions in Multiple Extensions ===
-ANDN            : rv_zbb, rv_zbkb, rv_zk, rv_zkn, rv_zks
-SHA256SIG0      : rv_zknh, rv_zkn, rv_zk
+ANDN            : rv_zbkb, rv_zk, rv_zkn, rv_zks, rv_zbb
+SHA256SIG0      : rv_zk, rv_zkn, rv_zknh
 ```
 
-### Tier 2
+### Tier 2 — Cross-Reference Report
 
 ```
 === Cross-Reference Report ===
@@ -128,10 +122,16 @@ SHA256SIG0      : rv_zknh, rv_zkn, rv_zk
   rv_zvfbdot32f              (normalised: zvfbdot32f)
   ...
 
-Summary: 52 matched, 33 in JSON only, 82 in manual only
+-- In manual only — not in JSON (77) --
+  svnapot
+  svpbmt
+  ...
+
+Summary: 52 matched, 33 in JSON only, 77 in manual only
+(85 unique JSON extensions, 129 unique manual extensions)
 ```
 
-### Tier 3
+### Tier 3 — Extension Sharing Graph
 
 ```
 === Extension Sharing Graph ===
@@ -139,13 +139,15 @@ Summary: 52 matched, 33 in JSON only, 82 in manual only
   Edges (shared pairs): 57
   Connected clusters:   4
 
--- Shared-Instruction Edges --
-  rv64_zkn <-> rv64_zk  |  16 shared: AES64DS, AES64DSM, AES64ES...
-  rv_zkn   <-> rv_zk    |  15 shared: ANDN, CLMUL, CLMULH...
-  ...
+-- Shared-Instruction Edges (sorted by shared count desc) --
+  rv64_zk <-> rv64_zkn  |  16 shared: AES64DS, AES64DSM, AES64ES...
+  rv_zkn  <-> rv_zk     |  15 shared: ANDN, CLMUL, CLMULH...
 
 -- Connected Clusters --
-  Cluster 1 (11): rv_zbb, rv_zbc, rv_zbkb, rv_zbkc, rv_zbkx, rv_zk, ...
+  Cluster 1 (11): rv_zbb, rv_zbc, rv_zbkb, rv_zbkc, rv_zbkx, rv_zk, rv_zkn, rv_zknh, rv_zks, rv_zksed, rv_zksh
+  Cluster 2 (8):  rv64_zbb, rv64_zbkb, rv64_zk, rv64_zkn, rv64_zknd, rv64_zkne, rv64_zknh, rv64_zks
+  Cluster 3 (8):  rv_zvbb, rv_zvkn, rv_zvkned, rv_zvknha, rv_zvknhb, rv_zvks, rv_zvksed, rv_zvksh
+  Cluster 4 (5):  rv32_zk, rv32_zkn, rv32_zknd, rv32_zkne, rv32_zknh
 ```
 
 ---
@@ -154,33 +156,38 @@ Summary: 52 matched, 33 in JSON only, 82 in manual only
 
 ### Extension name normalisation (Tier 2)
 
-The JSON file uses prefixed names (`rv_zba`, `rv64_zbkb`) while the ISA manual uses bare names (`Zba`, `Zbkb`). Normalisation strips the `rv_`, `rv32_`, and `rv64_` prefixes and lowercases both sides before comparison. This is the primary challenge the spec calls out and the main source of mismatches.
+The JSON file uses prefixed names (`rv_zba`, `rv64_zbkb`) while the ISA manual uses bare names (`Zba`, `Zbkb`). Both sides are normalised to lowercase bare names by stripping the `rv_`, `rv32_`, and `rv64_` prefixes before comparison. This is the primary data mismatch the spec calls out and requires careful handling.
 
-### Manual scanning approach
-
-Rather than cloning the full repository, the tool fetches `.adoc` files remotely using the GitHub Git Trees API (a single API call for the file list, followed by concurrent raw content downloads). This avoids disk usage while keeping the scanning fast.
+### AsciiDoc scanning approach
 
 Two regex patterns are used:
-- A strict `Z*` / `Sv*` pattern for multi-character extension names (e.g. `Zba`, `Svnapot`)
-- An explicit phrasing pattern for single-letter base ISA extensions (e.g. `"M extension"`)
+- **`Z*` / `Sv*` pattern**: matches multi-character extension names (e.g. `Zba`, `Svnapot`) at word boundaries, covering both heading and inline references.
+- **Single-letter pattern**: only matches base ISA letters (`M`, `F`, `D`, etc.) when explicitly followed by `extension` or `standard` — prevents matching stray uppercase letters in prose.
 
-This keeps false positives low while capturing the real extension references in the spec.
+A noise deny-list filters out author names and English words that start with `z` and pass the regex (e.g. `zeroed`, `zeroing`, `zext`).
 
-### Shared-instruction graph (Tier 3)
+### Data locality
 
-The graph is built from the multi-extension instruction map produced in Tier 1. Nodes are extensions; edges are drawn between any two extensions that share at least one instruction mnemonic. The `networkx` library handles connected component analysis.
+Both source repositories are cloned once under `data/` and read from disk. This eliminates GitHub API rate limits, removes the `requests` dependency entirely, and makes the tool fully reproducible offline.
+
+### Deterministic output
+
+Extension lists in `multi_ext_instructions` are stored in `sorted()` order, and shared instruction lists on graph edges are also sorted. This ensures identical output on every run regardless of Python's internal set/dict ordering.
+
+### Extension sharing graph (Tier 3)
+
+Built from the multi-extension instruction map produced in Tier 1. Two extensions are connected if they share at least one instruction mnemonic. Edges carry the full sorted list of shared mnemonics and a weight (count). Connected component analysis reveals four distinct extension clusters, all within the cryptography and vector ISA sub-families.
 
 ### AI-assisted development
 
-This project was developed with the assistance of AI tooling to accelerate workflow, drafting, and iteration — under active human supervision throughout. All logic, design choices, and output were reviewed and validated manually to ensure correctness and that nothing spurious or inaccurate made it into the final submission.
+This project was developed with the assistance of AI tooling to accelerate workflow, drafting, and iteration — under active human supervision throughout. All logic, design choices, normalisation decisions, and output were reviewed and validated manually to ensure correctness and that nothing spurious made it into the final submission.
 
 ---
 
 ## Dependencies
 
-| Package    | Purpose                              |
-|------------|--------------------------------------|
-| `requests` | Fetching remote JSON and AsciiDoc    |
-| `networkx` | Graph construction and analysis      |
-| `pytest`   | Unit testing                         |
-| `uv`       | Fast package installation (optional) |
+| Package    | Purpose                                   |
+|------------|-------------------------------------------|
+| `networkx` | Graph construction and cluster analysis   |
+| `pytest`   | Unit testing framework                    |
+| `uv`       | Fast package installation (optional)      |

@@ -6,7 +6,6 @@ repository, groups instructions by extension tag, and identifies instructions
 that belong to more than one extension.
 """
 import json
-import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -62,7 +61,9 @@ def parse_instructions(data: dict) -> tuple[dict, dict]:
         for ext in extensions:
             extensions_map[ext].append(mnemonic)
 
-        unique_exts = list(set(extensions))
+        # sorted() here ensures the extension list is deterministic regardless
+        # of the order entries appear in the JSON, making output reproducible.
+        unique_exts = sorted(set(extensions))
         if len(unique_exts) > 1:
             multi_ext_instructions[mnemonic] = unique_exts
 

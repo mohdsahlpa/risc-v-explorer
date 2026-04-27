@@ -28,12 +28,12 @@ def build_shared_graph(multi_ext_instructions: dict) -> nx.Graph:
                 pair_to_instrs[pair].append(instr)
 
     for (ext_a, ext_b), shared in pair_to_instrs.items():
-        G.add_edge(ext_a, ext_b, instructions=shared, weight=len(shared))
+        G.add_edge(ext_a, ext_b, instructions=sorted(shared), weight=len(shared))
 
     return G
 
 
-def print_graph_report(G: nx.Graph):
+def print_graph_report(G: nx.Graph) -> None:
     """
     Prints a text-based summary of the extension-sharing graph.
     Lists connected components, then each edge with shared instruction count.

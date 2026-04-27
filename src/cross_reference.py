@@ -31,7 +31,15 @@ _MULTI_CHAR_EXT = re.compile(
 _KNOWN_SINGLE_LETTER = {"m", "f", "d", "a", "c", "h", "q", "v", "s"}
 
 # Tokens that pass the regex but are not extension names (author names, words)
-_NOISE = {"zero", "zeros", "zeroes", "zhang", "zabrocki", "zandijk"}
+_NOISE = {
+    # Author names found in acknowledgement sections
+    "zhang", "zabrocki", "zandijk",
+    # English words beginning with 'z' caught by the Zz-prefix pattern
+    "zero", "zeros", "zeroes", "zeroed", "zeroing",
+    "zeroization", "zeroized", "zeroness", "zeroth",
+    # 'zext' is a zero-extension operation, not a RISC-V ISA extension name
+    "zext",
+}
 
 
 def scan_manual_src(src_dir: Path = _DEFAULT_MANUAL_SRC) -> set[str]:
