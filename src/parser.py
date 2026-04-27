@@ -46,13 +46,14 @@ def print_summary(extensions_map: dict, multi_ext_instructions: dict):
     Prints the summary table and the list of multi-extension instructions.
     """
     print("=== Extension Summary ===")
-    print(f"{'Extension Tag':<20} | {'Instruction Count':<18} | {'Example Mnemonic'}")
-    print("-" * 65)
+    print(f"{'Extension Tag':<20} | {'Count':<5} | {'Example Mnemonic'}")
+    print("-" * 55)
     
     for ext, instrs in sorted(extensions_map.items()):
         count = len(instrs)
         example = instrs[0] if count > 0 else "N/A"
-        print(f"{ext:<20} | {count:<14} instr. | e.g. {example.upper()}")
+        label = "instruction" if count == 1 else "instructions"
+        print(f"{ext:<20} | {count} {label} | e.g. {example.upper()}")
         
     print("\n=== Instructions in Multiple Extensions ===")
     if not multi_ext_instructions:
