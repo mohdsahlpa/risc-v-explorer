@@ -1,6 +1,6 @@
 """
 RISC-V Instruction Set Explorer
-Entry point — runs Tier 1 (parsing) and Tier 2 (cross-reference).
+Entry point — runs Tier 1 (parsing), Tier 2 (cross-reference), and Tier 3 (graph).
 """
 from src.parser import fetch_instruction_data, parse_instructions, print_summary
 from src.cross_reference import (
@@ -9,6 +9,7 @@ from src.cross_reference import (
     cross_reference,
     print_cross_reference_report,
 )
+from src.graph import build_shared_graph, print_graph_report
 
 
 def main():
@@ -28,6 +29,13 @@ def main():
     manual_names = build_manual_ext_set(raw_tokens)
     result = cross_reference(set(ext_map.keys()), manual_names)
     print_cross_reference_report(result)
+
+    # --- Tier 3: Bonus Graph ---
+    print("\n" + "=" * 60)
+    print("Tier 3: Extension Sharing Graph")
+    print("=" * 60)
+    G = build_shared_graph(multi_ext)
+    print_graph_report(G)
 
 
 if __name__ == "__main__":
