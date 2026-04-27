@@ -1,9 +1,14 @@
 import re
+import os
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# GitHub API base for the ISA manual src/ directory
-ISA_MANUAL_API = "https://api.github.com/repos/riscv/riscv-isa-manual/contents/src"
+# Single-call Git Trees API — returns the full repo tree in one request,
+# avoiding unauthenticated rate limits that hit per directory traversal.
+_TREES_API = (
+    "https://api.github.com/repos/riscv/riscv-isa-manual/git/trees/main?recursive=1"
+)
+_RAW_BASE = "https://raw.githubusercontent.com/riscv/riscv-isa-manual/main"
 
 # Pattern 1: Explicit "X Extension" phrasing for single-letter base ISA
 # e.g. "M extension", "F extension"
@@ -19,26 +24,27 @@ _MULTI_CHAR_EXT = re.compile(
 )
 
 
-def _get_adoc_file_urls() -> list[str]:
+def _get_adoc_file_urls(token: str | None = None) -> list[str]:
     """
-    Walks the ISA manual src/ directory (and one level of subdirs)
-    and returns raw download URLs for all .adoc files.
+    Uses the Git Trees API (one request) to enumerate all .adoc files
+    under src/ in the ISA manual repository, then builds raw content URLs.
+
+    Accepts an optional GitHub personal access token to raise the rate limit
+    from 60 to 5000 requests/hour (set the GITHUB_TOKEN env var).
     """
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    resp = requests.get(_TREES_API, headers=headers)
+    resp.raise_for_status()
+
+    tree = resp.json().get("tree", [])
     urls = []
-
-    def _collect(api_url: str):
-        resp = requests.get(api_url)
-        resp.raise_for_status()
-        for item in resp.json():
-            if item["type"] == "file" and item["name"].endswith(".adoc"):
-                # Build raw URL from path
-                path = item["path"]
-                urls.append(f"https://raw.githubusercontent.com/riscv/riscv-isa-manual/main/{path}")
-            elif item["type"] == "dir":
-                # Only go one level deep to avoid rate limits
-                _collect(item["url"])
-
-    _collect(ISA_MANUAL_API)
+    for item in tree:
+        path: str = item.get("path", "")
+        if item.get("type") == "blob" and path.startswith("src/") and path.endswith(".adoc"):
+            urls.append(f"{_RAW_BASE}/{path}")
     return urls
 
 
@@ -62,9 +68,14 @@ def fetch_manual_extensions(max_workers: int = 10) -> set[str]:
     """
     Fetches all .adoc files from the ISA manual concurrently and
     returns the raw set of extension name tokens found across all files.
+
+    Reads GITHUB_TOKEN from the environment if set, which raises the
+    API rate limit from 60 to 5000 req/hr for the initial tree lookup.
+    Raw file downloads are not rate-limited regardless.
     """
+    token = os.environ.get("GITHUB_TOKEN")
     print("Fetching file list from ISA manual repository...")
-    urls = _get_adoc_file_urls()
+    urls = _get_adoc_file_urls(token=token)
     print(f"  Found {len(urls)} .adoc file(s). Scanning...")
 
     all_tokens: set[str] = set()
@@ -74,7 +85,7 @@ def fetch_manual_extensions(max_workers: int = 10) -> set[str]:
             try:
                 all_tokens |= future.result()
             except Exception:
-                pass  # skip files that fail to fetch (rate limit, etc.)
+                pass  # skip files that fail to fetch
 
     return all_tokens
 
