@@ -48,31 +48,48 @@ def _get_adoc_file_urls(token: str | None = None) -> list[str]:
     return urls
 
 
-def _fetch_and_scan(url: str) -> set[str]:
+def _scan_local(src_dir: str) -> set[str]:
     """
-    Downloads one .adoc file and returns all raw extension name
-    strings found in it (unprocessed).
+    Walks a locally cloned ISA manual src/ directory and scans all .adoc files.
+    No network calls required.
     """
-    resp = requests.get(url)
-    resp.raise_for_status()
-    content = resp.text
-    found = set()
-    for match in _SINGLE_LETTER_EXT.finditer(content):
-        found.add(match.group(1).lower())
-    for match in _MULTI_CHAR_EXT.finditer(content):
-        found.add(match.group(1).lower())
+    found: set[str] = set()
+    for dirpath, _, filenames in os.walk(src_dir):
+        for fname in filenames:
+            if fname.endswith(".adoc"):
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    for match in _SINGLE_LETTER_EXT.finditer(content):
+                        found.add(match.group(1).lower())
+                    for match in _MULTI_CHAR_EXT.finditer(content):
+                        found.add(match.group(1).lower())
+                except OSError:
+                    pass
     return found
 
 
 def fetch_manual_extensions(max_workers: int = 10) -> set[str]:
     """
-    Fetches all .adoc files from the ISA manual concurrently and
-    returns the raw set of extension name tokens found across all files.
+    Returns the raw set of extension name tokens found in the ISA manual.
 
-    Reads GITHUB_TOKEN from the environment if set, which raises the
-    API rate limit from 60 to 5000 req/hr for the initial tree lookup.
-    Raw file downloads are not rate-limited regardless.
+    Resolution order:
+      1. RISCV_MANUAL_PATH — path to a local clone of riscv/riscv-isa-manual.
+         The src/ subdirectory is scanned directly. No network calls needed.
+      2. Remote fetch via GitHub raw URLs (fast, not rate-limited for content).
+         A single GitHub Trees API call is used to enumerate file paths.
+         Set GITHUB_TOKEN to raise the API rate limit from 60 to 5000 req/hr.
     """
+    local_path = os.environ.get("RISCV_MANUAL_PATH")
+    if local_path:
+        src_dir = os.path.join(local_path, "src")
+        if not os.path.isdir(src_dir):
+            # Tolerate passing the src/ dir directly
+            src_dir = local_path
+        print(f"Using local ISA manual at: {src_dir}")
+        return _scan_local(src_dir)
+
     token = os.environ.get("GITHUB_TOKEN")
     print("Fetching file list from ISA manual repository...")
     urls = _get_adoc_file_urls(token=token)

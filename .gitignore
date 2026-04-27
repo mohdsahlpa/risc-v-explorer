@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Local data / cloned repos (not tracked)
+data/
+
 # C extensions
 *.so
 
